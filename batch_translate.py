@@ -1,5 +1,5 @@
 import fitz  # PyMuPDF
-from deep_translator import GoogleTranslator
+from deep_translator import MyMemoryTranslator
 import os
 import subprocess
 from pathlib import Path
@@ -19,7 +19,7 @@ def force_ocr_and_rebuild(input_path, output_path, target_lang="en", font_path=N
 
     src_doc = fitz.open(str(temp_ocr))
     out_doc = fitz.open()  # 创建全新的干净空白 PDF，彻底丢弃 13.5MB 的中文扫描底图
-    translator = GoogleTranslator(source='auto', target=target_lang)
+translator = MyMemoryTranslator(source='zh-CN', target='en-GB')
 
     use_custom_font = bool(font_path and os.path.exists(font_path))
     font_name = "custom_font" if use_custom_font else "helv"
