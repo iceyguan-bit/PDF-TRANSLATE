@@ -12,7 +12,6 @@ def force_ocr_and_rebuild(input_path, output_path, target_lang="en", font_path=N
         "ocrmypdf",
         "-l", "chi_sim+eng",
         "--force-ocr",
-        "--clean",          # 清理扫描件噪点提升中文识别率
         str(input_path),
         str(temp_ocr)
     ]
