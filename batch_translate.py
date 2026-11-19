@@ -4,45 +4,35 @@ import os
 import subprocess
 from pathlib import Path
 
-def has_text_layer(pdf_path):
-    """检测 PDF 是否已经包含可选中的文字层"""
-    doc = fitz.open(pdf_path)
-    total_chars = sum(len(page.get_text().strip()) for page in doc)
-    doc.close()
-    return total_chars > 20
-
-def run_ocr_if_needed(input_path, temp_ocr_path):
-    """如果是纯图片扫描件，调用 ocrmypdf 自动识别中英文生成文字层"""
-    if has_text_layer(input_path):
-        print("  -> 检测到原生文字层，跳过 OCR 直接翻译。")
-        return input_path
-
-    print("  -> 检测到纯图片扫描件，正在执行自动 OCR 识别（约需 10~30 秒）...")
+def force_ocr_and_rebuild(input_path, output_path, target_lang="en", font_path=None):
+    temp_ocr = Path("temp_ocr_work.pdf")
+    
+    # 1. 强制执行带图像清理的 OCR，提取文字坐标
     cmd = [
         "ocrmypdf",
-        "-l", "chi_sim+eng",  # 同时识别简体中文和英文
-        "--force-ocr",        # 强制识别图片区域
-        "--deskew",           # 自动纠偏倾斜的扫描页
+        "-l", "chi_sim+eng",
+        "--force-ocr",
+        "--clean",          # 清理扫描件噪点提升中文识别率
         str(input_path),
-        str(temp_ocr_path)
+        str(temp_ocr)
     ]
     subprocess.run(cmd, check=True)
-    print("  -> OCR 识别完成！")
-    return temp_ocr_path
 
-def translate_single_pdf(input_path, output_path, target_lang="en", font_path=None):
-    doc = fitz.open(input_path)
+    src_doc = fitz.open(str(temp_ocr))
+    out_doc = fitz.open()  # 创建全新的干净空白 PDF，彻底丢弃 13.5MB 的中文扫描底图
     translator = GoogleTranslator(source='auto', target=target_lang)
 
     use_custom_font = bool(font_path and os.path.exists(font_path))
     font_name = "custom_font" if use_custom_font else "helv"
 
-    for page_num, page in enumerate(doc):
+    for page_num, src_page in enumerate(src_doc):
+        # 在新 PDF 中创建相同尺寸的白纸页面
+        new_page = out_doc.new_page(width=src_page.rect.width, height=src_page.rect.height)
         if use_custom_font:
-            page.insert_font(fontname=font_name, fontfile=font_path)
+            new_page.insert_font(fontname=font_name, fontfile=font_path)
 
-        blocks = page.get_text("blocks")
-        translations = []
+        blocks = src_page.get_text("blocks")
+        print(f"  第 {page_num + 1} 页识别到 {len(blocks)} 个文本块...")
 
         for b in blocks:
             if b[6] == 0:
@@ -50,55 +40,47 @@ def translate_single_pdf(input_path, output_path, target_lang="en", font_path=No
                 raw_text = b[4].strip()
                 if not raw_text or raw_text.isdigit():
                     continue
-                clean_text = raw_text.replace("\n", " ")[:4500]  # 限制单次长度防超限
+                clean_text = raw_text.replace("\n", " ")[:4500]
                 try:
                     translated_text = translator.translate(clean_text)
-                    translations.append((rect, translated_text))
-                    page.add_redact_annot(rect, fill=(1, 1, 1))
+                    print(f"    [译] {clean_text[:15]}... -> {translated_text[:20]}...")
                 except Exception as e:
-                    print(f"  [警告] 第 {page_num + 1} 页段落跳过: {e}")
+                    print(f"    [跳过] {e}")
+                    translated_text = clean_text
 
-        page.apply_redactions()
-
-        for rect, trans_text in translations:
-            font_size = 9
-            while font_size >= 5:
-                rc = page.insert_textbox(
-                    rect,
-                    trans_text,
-                    fontsize=font_size,
-                    fontname=font_name,
-                    color=(0, 0, 0),
-                    align=fitz.TEXT_ALIGN_LEFT
-                )
-                if rc >= 0:
-                    break
-                font_size -= 1
+                # 将英文写入新白纸页面的对应坐标
+                font_size = 10
+                while font_size >= 6:
+                    rc = new_page.insert_textbox(
+                        rect,
+                        translated_text,
+                        fontsize=font_size,
+                        fontname=font_name,
+                        color=(0, 0, 0),
+                        align=fitz.TEXT_ALIGN_LEFT
+                    )
+                    if rc >= 0:
+                        break
+                    font_size -= 1
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    doc.save(output_path)
-    doc.close()
+    out_doc.save(output_path, garbage=4, deflate=True)
+    src_doc.close()
+    out_doc.close()
+    if temp_ocr.exists():
+        temp_ocr.unlink()
 
 def main():
     input_dir = Path("input_pdfs")
-    temp_dir = Path("temp_ocr_pdfs")
     output_dir = Path("translated_pdfs")
-    os.makedirs(temp_dir, exist_ok=True)
-
-    target_lang = "en"  # 目标语言: 'en'(英文), 'zh-CN'(简体中文)
+    target_lang = "en"
     linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
-    pdf_files = list(input_dir.glob("*.pdf"))
-    print(f"找到 {len(pdf_files)} 个 PDF 文件，开始处理...")
-
-    for pdf_file in pdf_files:
-        print(f"正在处理: {pdf_file.name}")
-        temp_ocr_file = temp_dir / pdf_file.name
-        processable_pdf = run_ocr_if_needed(pdf_file, temp_ocr_file)
-
+    for pdf_file in input_dir.glob("*.pdf"):
+        print(f"开始重构翻译: {pdf_file.name}")
         out_file = output_dir / f"{pdf_file.stem}_{target_lang}.pdf"
-        translate_single_pdf(str(processable_pdf), str(out_file), target_lang, linux_font)
-        print(f"完成: {out_file.name}")
+        force_ocr_and_rebuild(str(pdf_file), str(out_file), target_lang, linux_font)
+        print(f"完成输出: {out_file.name}")
 
 if __name__ == "__main__":
     main()
