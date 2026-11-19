@@ -3,8 +3,8 @@ name: 自动批量翻译 PDF
 on:
   push:
     paths:
-      - 'input_pdfs/**.pdf' # 只要 input_pdfs 文件夹有新 PDF 上传，就自动触发
-  workflow_dispatch:        # 支持在网页上手动点击按钮触发
+      - 'input_pdfs/**.pdf'
+  workflow_dispatch:
 
 jobs:
   translate:
@@ -13,23 +13,21 @@ jobs:
       - name: 1. 拉取仓库里的 PDF 文件
         uses: actions/checkout@v4
 
-      - name: 2. 安装云端翻译引擎 (pdf2zh)
+      - name: 2. 安装 Python 与中文字体
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: 安装依赖
+      - name: 安装依赖与字体
         run: |
-          pip install pdf2zh
+          sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+          pip install pdf2zh "tencentcloud-sdk-python==3.0.1250"
 
-      - name: 3. 批量翻译所有 PDF
+      - name: 3. 批量翻译所有 PDF（支持空格与中文文件名）
         run: |
           mkdir -p translated_pdfs
-          # 遍历 input_pdfs 文件夹下的所有 PDF 并翻译为简体中文 (-lo zh)
-          for file in input_pdfs/*.pdf; do
-            if [ -f "$file" ]; then
-              echo "正在翻译: $file"
-              pdf2zh "$file" -lo zh -s google -o translated_pdfs/
-            fi
+          find input_pdfs -maxdepth 1 -type f -name "*.pdf" -print0 | while IFS= read -r -d '' file; do
+            echo "正在翻译: $file"
+            pdf2zh "$file" -lo en -s google -o translated_pdfs/
           done
 
       - name: 4. 打包翻译结果供下载
