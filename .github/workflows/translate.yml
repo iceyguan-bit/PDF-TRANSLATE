@@ -10,25 +10,20 @@ jobs:
   translate:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 拉取仓库里的 PDF 文件
+      - name: 1. 拉取仓库文件
         uses: actions/checkout@v4
 
-      - name: 2. 安装 Python 与中文字体
+      - name: 2. 配置 Python 与中文字体
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: 安装依赖与字体
+      - name: 安装轻量级依赖
         run: |
           sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
-          pip install pdf2zh "tencentcloud-sdk-python==3.0.1250"
+          pip install pymupdf deep-translator
 
-      - name: 3. 批量翻译所有 PDF（支持空格与中文文件名）
-        run: |
-          mkdir -p translated_pdfs
-          find input_pdfs -maxdepth 1 -type f -name "*.pdf" -print0 | while IFS= read -r -d '' file; do
-            echo "正在翻译: $file"
-            pdf2zh "$file" -lo en -s google -o translated_pdfs/
-          done
+      - name: 3. 运行批量翻译脚本
+        run: python batch_translate.py
 
       - name: 4. 打包翻译结果供下载
         uses: actions/upload-artifact@v4
